@@ -17,7 +17,9 @@ MPI_Comm spawn_process(MPI_Comm comm, int argc, char** argv)
     {
         if (i != rank)
         {
-            MPI_Send(NULL, 0, MPI_CHAR, i, SYNCRONIZATION_TAG, comm);
+            MPI_Request request;
+            MPI_Isend(NULL, 0, MPI_CHAR, i, SYNCRONIZATION_TAG, comm, &request);
+            MPI_Request_free(&request);
         }
     }
 
