@@ -47,7 +47,7 @@ void run_coordinator(int argc, char** argv)
 
     // Spawn child processes.
     // The first child needs to use MPI_COMM_SELF as the communicator.
-    // The subsequent children needs to use the merged communicator of the previous spawn.
+    // The subsequent children needs to use the merged communicator of the previous child.
     comm = spawn_process(MPI_COMM_SELF, argc, argv);
     comm = spawn_process(comm, argc, argv);
     comm = spawn_process(comm, argc, argv);
