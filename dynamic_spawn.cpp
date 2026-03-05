@@ -102,21 +102,17 @@ void run_child(MPI_Comm parent)
         MPI_Recv(NULL, 0, MPI_CHAR, status.MPI_SOURCE, status.MPI_TAG, comm, MPI_STATUS_IGNORE);
         switch (status.MPI_TAG)
         {
+            case MESSAGE_TAG:
+            {
+                // Handle the message from the coordinator process
+                printf("Rank %d received a work message from the coordinator process.\n", rank);
+                break;
+            }
             case SYNCRONIZATION_TAG:
             {
                 // Merge the intercommunicator of the parent and child processes
                 MPI_Comm_spawn(NULL, MPI_ARGV_NULL, 0, MPI_INFO_NULL, status.MPI_SOURCE, comm, &comm, MPI_ERRCODES_IGNORE);
                 MPI_Intercomm_merge(comm, 1, &comm);
-
-                // Print the rank and size of the merged communicator
-                MPI_Comm_rank(comm, &rank);
-                MPI_Comm_size(comm, &commSize);
-                break;
-            }
-            case MESSAGE_TAG:
-            {
-                // Handle the message from the coordinator process
-                printf("Rank %d received a work message from the coordinator process.\n", rank);
                 break;
             }
             case TERMINATION_TAG:
