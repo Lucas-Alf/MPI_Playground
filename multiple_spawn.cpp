@@ -12,13 +12,27 @@ int main(int argc, char** argv)
     // Otherwise, it is a child process.
     if (parent == MPI_COMM_NULL)
     {
-        // Spawn a child process
-        MPI_Comm child;
-        MPI_Comm_spawn(argv[0], MPI_ARGV_NULL, 1, MPI_INFO_NULL, 0, MPI_COMM_SELF, &child, MPI_ERRCODES_IGNORE);
+        // Number of child processes to spawn
+        int childProcesses = 3;
+
+        // Populate child process information
+        char** childCommands = new char*[childProcesses];
+        int* childMaxProcs = new int[childProcesses];
+        MPI_Info* childInfos = new MPI_Info[childProcesses];
+        for (int i = 0; i < childProcesses; i++)
+        {
+            childCommands[i] = argv[0];
+            childMaxProcs[i] = 1;
+            childInfos[i] = MPI_INFO_NULL;
+        }
+        
+        // Spawn child processes
+        MPI_Comm intercomm;
+        MPI_Comm_spawn_multiple(childProcesses, childCommands, MPI_ARGVS_NULL, childMaxProcs, childInfos, 0, MPI_COMM_SELF, &intercomm, MPI_ERRCODES_IGNORE);
         
         // Merge the intercommunicator of the parent and child processes
         MPI_Comm comm;
-        MPI_Intercomm_merge(child, 0, &comm);
+        MPI_Intercomm_merge(intercomm, 0, &comm);
         
         // Print the rank and size of the merged communicator
         int rank;
