@@ -30,6 +30,7 @@ MPI_Comm spawn_process(MPI_Comm comm, int argc, char** argv)
     // Merge the intercommunicator of the parent and child processes
     MPI_Comm intercomm;
     MPI_Intercomm_merge(child, 0, &intercomm);
+    MPI_Comm_free(&child);
     return intercomm;
 }
 
@@ -77,6 +78,7 @@ void run_child(MPI_Comm parent)
     // Merge the intercommunicator of the parent and child processes
     MPI_Comm comm;
     MPI_Intercomm_merge(parent, 1, &comm);
+    MPI_Comm_free(&parent);
 
     // Print the rank and size of the merged communicator
     int rank;
@@ -96,7 +98,7 @@ void run_child(MPI_Comm parent)
         // If there is no message, sleep for a while and check again
         if (!flag)
         {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
 
@@ -113,8 +115,14 @@ void run_child(MPI_Comm parent)
             case SYNCRONIZATION_TAG:
             {
                 // Merge the intercommunicator of the parent and child processes
-                MPI_Comm_spawn(NULL, MPI_ARGV_NULL, 0, MPI_INFO_NULL, status.MPI_SOURCE, comm, &comm, MPI_ERRCODES_IGNORE);
-                MPI_Intercomm_merge(comm, 1, &comm);
+                // and free the old communicators
+                MPI_Comm newComm;
+                MPI_Comm mergedComm;
+                MPI_Comm_spawn(NULL, MPI_ARGV_NULL, 0, MPI_INFO_NULL, status.MPI_SOURCE, comm, &newComm, MPI_ERRCODES_IGNORE);
+                MPI_Intercomm_merge(newComm, 1, &mergedComm);
+                MPI_Comm_free(&comm);
+                MPI_Comm_free(&newComm);
+                comm = mergedComm;
                 break;
             }
             case TERMINATION_TAG:
