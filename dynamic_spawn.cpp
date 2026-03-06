@@ -5,10 +5,11 @@
 static const int MESSAGE_TAG = 0;
 static const int SYNCRONIZATION_TAG = 1;
 static const int TERMINATION_TAG = 2;
+static const int REMOVE_TAG = 3;
 
-MPI_Comm spawn_process(MPI_Comm comm, int argc, char** argv)
+// Send a message to all ranks in the communicator to synchronize the parent and child communicators
+void broadcast_sync_message(MPI_Comm comm)
 {
-    // Send a message to all ranks in the communicator to synchronize the parent and child communicators
     int rank;
     int comSize;
     MPI_Comm_rank(comm, &rank);
@@ -18,10 +19,17 @@ MPI_Comm spawn_process(MPI_Comm comm, int argc, char** argv)
         if (i != rank)
         {
             MPI_Request request;
-            MPI_Isend(NULL, 0, MPI_CHAR, i, SYNCRONIZATION_TAG, comm, &request);
+            MPI_Isend(0, 0, MPI_INT, i, SYNCRONIZATION_TAG, comm, &request);
             MPI_Request_free(&request);
         }
     }
+}
+
+// Spawn a new child MPI process
+MPI_Comm spawn_process(MPI_Comm comm, int argc, char** argv)
+{
+    // Broadcast a message to all ranks to synchronize
+    broadcast_sync_message(comm);
 
     // Spawn a child process
     MPI_Comm child;
@@ -32,6 +40,37 @@ MPI_Comm spawn_process(MPI_Comm comm, int argc, char** argv)
     MPI_Intercomm_merge(child, 0, &intercomm);
     MPI_Comm_free(&child);
     return intercomm;
+}
+
+MPI_Comm remove_process(MPI_Comm comm, int rankToRemove)
+{
+    // Send a remove message to all ranks in the communicator to remove the specified rank
+    int rank;
+    int comSize;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &comSize);
+    for (int i = 0; i < comSize; i++)
+    {
+        if (i != rank)
+        {
+            MPI_Request request;
+            MPI_Isend(&rankToRemove, 1, MPI_INT, i, REMOVE_TAG, comm, &request);
+            MPI_Request_free(&request);
+        }
+    }
+
+    // Create a new communicator that excludes the specified rank
+    MPI_Group group;
+    MPI_Comm_group(comm, &group);
+    MPI_Group newGroup;
+    int ranks_to_exclude[1] = {rankToRemove};
+    MPI_Group_excl(group, 1, ranks_to_exclude, &newGroup);
+    MPI_Comm newComm;
+    MPI_Comm_create(comm, newGroup, &newComm);
+    MPI_Group_free(&group);
+    MPI_Group_free(&newGroup);
+    MPI_Comm_free(&comm);
+    return newComm;
 }
 
 // Run the coordinator process
@@ -49,13 +88,24 @@ void run_coordinator(int argc, char** argv)
     // Spawn child processes.
     // The first child needs to use MPI_COMM_SELF as the communicator.
     // The subsequent children needs to use the merged communicator of the previous child.
+    printf("--- Spawning child processes ---\n");
     comm = spawn_process(MPI_COMM_SELF, argc, argv);
     comm = spawn_process(comm, argc, argv);
     comm = spawn_process(comm, argc, argv);
     comm = spawn_process(comm, argc, argv);
     comm = spawn_process(comm, argc, argv);
 
+    // Remove child processes
+    // Note that after removing a child process the ranks will be reordered.
+    // Exemple: if the communicator has 5 ranks (0, 1, 2, 3, 4) and we remove the rank 1, 
+    // the new communicator will have 4 ranks (0, 2, 3, 4) and the new ranks will be reorderd (0, 1, 2, 3).
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    printf("--- Removing child processes ---\n");
+    comm = remove_process(comm, 1);
+    
     // Send a message to all ranks in the communicator to terminate the child processes
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    printf("--- Terminating program ---\n");
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &commSize);
     for (int i = 0; i < commSize; i++)
@@ -63,13 +113,10 @@ void run_coordinator(int argc, char** argv)
         if (i != rank)
         {
             MPI_Request request;
-            MPI_Isend(NULL, 0, MPI_CHAR, i, TERMINATION_TAG, comm, &request);
+            MPI_Isend(0, 0, MPI_INT, i, TERMINATION_TAG, comm, &request);
             MPI_Request_free(&request);
         }
     }
-
-    // Wait for all child processes to terminate
-    MPI_Barrier(comm);
 }
 
 // Run the child process
@@ -98,12 +145,13 @@ void run_child(MPI_Comm parent)
         // If there is no message, sleep for a while and check again
         if (!flag)
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::seconds(1));
             continue;
         }
 
         // Receive the message from the coordinator process
-        MPI_Recv(NULL, 0, MPI_CHAR, status.MPI_SOURCE, status.MPI_TAG, comm, MPI_STATUS_IGNORE);
+        int message = 0;
+        MPI_Recv(&message, 1, MPI_INT, status.MPI_SOURCE, status.MPI_TAG, comm, MPI_STATUS_IGNORE);
         switch (status.MPI_TAG)
         {
             case MESSAGE_TAG:
@@ -123,13 +171,49 @@ void run_child(MPI_Comm parent)
                 MPI_Comm_free(&comm);
                 MPI_Comm_free(&newComm);
                 comm = mergedComm;
+
+                // MPI_Comm_rank(comm, &rank);
+                // MPI_Comm_size(comm, &commSize);
+                // printf("Rank %d received a synchronization message from the coordinator process. New communicator has %d processes.\n", rank, commSize);
                 break;
+            }
+            case REMOVE_TAG:
+            {
+                // Remove the specified rank from the communicator
+                MPI_Group group;
+                MPI_Comm_group(comm, &group);
+                MPI_Group newGroup;
+                int ranks_to_exclude[1] = {message};
+                MPI_Group_excl(group, 1, ranks_to_exclude, &newGroup);
+                MPI_Comm newComm;
+                MPI_Comm_create(comm, newGroup, &newComm);
+                MPI_Group_free(&group);
+                MPI_Group_free(&newGroup);
+                MPI_Comm_free(&comm);
+                comm = newComm;
+
+                // If this rank is the one to be removed, terminate the process
+                if (message == rank)
+                {
+                    printf("Rank %d terminating...\n", rank);
+                    return;
+                }
+                else
+                {
+                    int newRank;
+                    int newSize;
+                    MPI_Comm_rank(comm, &newRank);
+                    MPI_Comm_size(comm, &newSize);
+                    printf("Rank %d removed the rank %d from communicator. (New rank: %d, New size: %d)\n", rank, message, newRank, newSize);
+                    rank = newRank;
+                    commSize = newSize;
+                    break;
+                }
             }
             case TERMINATION_TAG:
             {
                 // Terminate the child process
                 printf("Rank %d received a termination message from the coordinator process. Terminating...\n", rank);
-                MPI_Barrier(comm);
                 return;
             }
             default:
